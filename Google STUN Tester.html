@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Google STUN Tester</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#fff;--fg:#1a1a1a;--mut:#666;--card:#f4f4f6;--bd:#d8d8de;--ok:#1a7f37;--bad:#c62828;--warn:#a15c00;--acc:#3b5bdb}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15161a;--fg:#e8e8ec;--mut:#9a9aa5;--card:#202228;--bd:#34363f;--ok:#4cc26b;--bad:#ff6b6b;--warn:#ffb347;--acc:#8ea2ff}}
+:root[data-theme="dark"]{--bg:#15161a;--fg:#e8e8ec;--mut:#9a9aa5;--card:#202228;--bd:#34363f;--ok:#4cc26b;--bad:#ff6b6b;--warn:#ffb347;--acc:#8ea2ff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:720px;margin:0 auto;padding:18px}
+h1{font-size:1.35rem;margin:0 0 4px}p.s{color:var(--mut);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;margin:10px 0}
+button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:1rem;cursor:pointer}
+button:disabled{opacity:.5}
+.row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.m{font-family:ui-monospace,Consolas,monospace;font-size:.85rem;word-break:break-all}
+.det{color:var(--mut);font-size:.85rem;margin-top:4px}
+#verdict{font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1>Google STUN tester</h1>
+<p class="s">Tests each of Google’s five public STUN servers. Run it on the network you want to check.</p>
+<button id="go">Run test</button>
+<div id="verdict" class="card" style="display:none"></div>
+<div id="out"></div>
+</main>
+<script>
+const URLS=["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302","stun:stun2.l.google.com:19302","stun:stun3.l.google.com:19302","stun:stun4.l.google.com:19302"];
+const $=id=>document.getElementById(id);
+function test(url,ms=6000){
+ return new Promise(res=>{
+  const r={srflx:null,errors:[],done:false};const t0=performance.now();let pc;
+  try{pc=new RTCPeerConnection({iceServers:[{urls:url}]})}catch(e){r.errors.push(e.message);return res(r)}
+  const fin=()=>{if(r.done)return;r.done=true;r.ms=Math.round(performance.now()-t0);try{pc.close()}catch(e){}res(r)};
+  pc.onicecandidate=e=>{
+   if(!e.candidate){fin();return}
+   const c=e.candidate.candidate;
+   if(/ typ srflx/.test(c)&&!r.srflx)r.srflx={ip:c.split(" ")[4],ms:Math.round(performance.now()-t0)};
+  };
+  pc.onicecandidateerror=e=>r.errors.push(e.errorCode+" "+(e.errorText||""));
+  pc.createDataChannel("t");
+  pc.createOffer().then(o=>pc.setLocalDescription(o)).catch(e=>{r.errors.push(e.message);fin()});
+  setTimeout(fin,ms);
+ });
+}
+$("go").onclick=async()=>{
+ const b=$("go");b.disabled=true;b.textContent="Testing…";
+ $("out").innerHTML="";$("verdict").style.display="none";
+ let ok=0;
+ for(const u of URLS){
+  const r=await test(u);const good=!!r.srflx;if(good)ok++;
+  const d=document.createElement("div");d.className="card";
+  d.innerHTML=`<div class="row"><b class="m">${u}</b><span class="${good?"ok":"bad"}">${good?"✔ working":"✘ failed"}</span></div>
+  <div class="det">${good?"Public address seen: "+r.srflx.ip+" · answered in "+r.srflx.ms+" ms":"No response after "+r.ms+" ms"}</div>
+  ${r.errors.length?`<div class="det warn">${[...new Set(r.errors)].join("<br>")}</div>`:""}`;
+  $("out").appendChild(d);
+ }
+ const v=$("verdict");v.style.display="block";
+ if(ok===URLS.length){v.className="card ok";v.textContent="✔ All "+ok+" Google STUN servers work on this network."}
+ else if(ok>0){v.className="card warn";v.textContent=ok+" of "+URLS.length+" work. Use one of the working ones in your ICE config."}
+ else{v.className="card bad";v.textContent="None work. This network is probably blocking UDP port 19302 or filtering DNS for google.com STUN hosts (error 701 means the hostname lookup failed)."}
+ b.disabled=false;b.textContent="Run again";
+};
+</script>
+</body>
+</html>
