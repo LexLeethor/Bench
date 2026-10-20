@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>SpiderHeck PeerJS / WebRTC Network Bench</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #101820; color: #e8f0f6; }
+    * { box-sizing: border-box; }
+    body { max-width: 1080px; margin: 0 auto; padding: 24px; }
+    h1 { line-height: 1.15; margin: 0 0 8px; font-size: clamp(1.7rem, 4vw, 2.5rem); }
+    h2 { font-size: 1.2rem; margin: 0 0 10px; }
+    p { margin: 8px 0; }
+    .lead { color: #bdcad5; max-width: 78ch; }
+    .notice { border: 1px solid #8b6b20; border-left: 5px solid #f0bc4b; border-radius: 8px; padding: 12px 16px; background: #292516; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; margin: 18px 0; }
+    section { border: 1px solid #344653; border-radius: 10px; padding: 18px; background: #17232d; }
+    label { display: block; font-weight: 650; margin: 10px 0 4px; }
+    input, select, button { font: inherit; border-radius: 6px; }
+    input, select { display: block; width: 100%; background: #0e171e; color: #f3f7fa; border: 1px solid #526676; padding: 9px 10px; }
+    button { border: 1px solid #63839b; background: #24465c; color: #fff; padding: 9px 13px; margin: 9px 7px 0 0; cursor: pointer; }
+    button:hover:not(:disabled) { background: #30617e; }
+    button:disabled { opacity: .48; cursor: not-allowed; }
+    button.secondary { background: #293740; }
+    button.danger { background: #632d32; border-color: #a1555a; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #80caff; outline-offset: 2px; }
+    .row { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+    .row > div { flex: 1 1 210px; }
+    .state { font-weight: 700; color: #a8d8ff; }
+    .muted { color: #aebdc8; font-size: .92rem; }
+    .small { font-size: .84rem; }
+    code { color: #b9e4ff; overflow-wrap: anywhere; }
+    #results { padding-left: 22px; margin: 8px 0; }
+    #results li { margin: 5px 0; }
+    .pass { color: #91e0aa; }
+    .warn { color: #ffd27b; }
+    .fail { color: #ff9292; }
+    #events { height: 330px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; border-radius: 7px; background: #080d11; color: #d5e0e8; font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .steps li { margin: 7px 0; }
+    @media (max-width: 600px) { body { padding: 14px; } section { padding: 14px; } }
+  </style>
+</head>
+<body>
+  <h1>SpiderHeck PeerJS / WebRTC Network Bench</h1>
+  <p class="lead">Standalone multiplayer network diagnostics. This page does not load Unity or modify game state. Run it in two browsers/devices to test the signaling server, ICE/STUN/TURN candidate gathering, WebRTC data channel, latency, and message-size limits.</p>
+  <p class="notice"><strong>School Wi-Fi test:</strong> use HTTPS or localhost, keep this tab open and in the foreground, and run the bench once on school Wi-Fi and once on a phone hotspot. A second browser/device on a different network is needed for the peer-to-peer test. The report never stores raw IP addresses or ICE candidate lines. PeerJS's public signaling and the configured STUN/TURN services are contacted when you run tests.</p>
+
+  <div class="grid">
+    <section>
+      <h2>1. Local browser and ICE checks</h2>
+      <label for="network-label">Network label (for your report)</label>
+      <input id="network-label" maxlength="80" value="School Wi-Fi" autocomplete="off">
+      <label for="ice-profile">ICE server profile</label>
+      <select id="ice-profile">
+        <option value="game">SpiderHeck profile: Google STUN + PeerJS TURN</option>
+        <option value="stun">Google STUN only (no relay fallback)</option>
+      </select>
+      <p class="muted">The game-matching profile uses Google's public STUN servers and PeerJS's shared public TURN service. STUN-only is a diagnostic comparison; it will fail on networks that require a relay.</p>
+      <button id="local-check" type="button">Run browser + ICE gathering checks</button>
+      <p>Environment: <span id="environment-status" class="state">Not checked</span><br>ICE gathering: <span id="ice-status" class="state">Not checked</span></p>
+      <ul id="results" aria-live="polite"></ul>
+    </section>
+    <section>
+      <h2>2. Signaling and peer connection</h2>
+      <label for="peer-id">Host peer ID / room code</label>
+      <input id="peer-id" maxlength="48" autocomplete="off" spellcheck="false" placeholder="Host generates an ID; guest enters it">
+      <p class="muted">Host first and share the generated ID with the guest. Peer IDs are case-sensitive. Both browsers use the selected ICE profile.</p>
+      <button id="host" type="button">Host and generate peer ID</button>
+      <button id="join" type="button">Join host ID</button>
+      <button id="close" class="danger" type="button" disabled>Disconnect / stop</button>
+      <p>PeerJS signaling: <span id="signal-status" class="state">Not started</span><br>Peer/data channel: <span id="link-status" class="state">Not connected</span></p>
+      <p>Connected peer IDs: <code id="connected-peers">—</code></p>
+      <button id="data-test" type="button" disabled>Run binary data-channel size test</button>
+      <p class="muted small">Uses the game's reliable raw data-channel mode. Sends one echo packet at 1, 16, 64, 128 and 256 KiB. A failed large send may close the channel; that is useful evidence for scene-sync packet-size problems.</p>
+    </section>
+  </div>
+
+  <section>
+    <div class="row">
+      <div><h2>Test summary</h2></div>
+      <div><button id="download" type="button" class="secondary">Download JSON report</button><button id="copy" type="button" class="secondary">Copy report summary</button><button id="clear" type="button" class="secondary">Clear event log</button></div>
+    </div>
+    <p id="overall" class="state">Run local checks or connect two browsers to begin.</p>
+    <p class="muted">Interpretation: no server-reflexive candidate often means STUN traffic is blocked or DNS/UDP is restricted. Relay candidates indicate TURN was reachable. A successful selected relay pair proves relay connectivity for that pair. “Signaling open” only proves PeerJS could reach its signaling service; it does not prove WebRTC can connect.</p>
+  </section>
+
+  <section style="margin-top:16px">
+    <h2>Event log</h2>
+    <pre id="events" role="log" aria-label="Network test event log" aria-live="polite"></pre>
+  </section>
+
+  <section style="margin-top:16px">
+    <h2>How to run a useful school Wi-Fi test</h2>
+    <ol class="steps">
+      <li>Open this same page on two devices/browsers. Keep one on school Wi-Fi; put the other on a phone hotspot or another internet connection. A second tab on the same laptop is only a basic smoke test, not a NAT/firewall test.</li>
+      <li>On both devices, use the same ICE profile and enter a useful network label. Run <strong>browser + ICE gathering checks</strong> and save each JSON report.</li>
+      <li>On the first device, click <strong>Host</strong> and share its generated peer ID. On the second device, enter that ID and click <strong>Join</strong>.</li>
+      <li>After the data channel opens, click <strong>Run binary data-channel size test</strong> on either side. Save both reports, including any errors and the selected candidate-pair type/protocol.</li>
+      <li>Repeat both tests using the Google-STUN-only profile, then compare school Wi-Fi results against the phone hotspot. Do not post reports publicly if you added identifying network labels.</li>
+    </ol>
+    <p class="muted small">Candidate gathering is a diagnostic, not a guarantee that the same candidate pair can connect to another player. The actual selected pair and echo test are the connectivity checks. Browser policy, PeerJS cloud outages, school firewall rules, and service-side rate limits can affect results. The game itself and NGO scene recovery are not exercised here.</p>
+  </section>
+
+  <script src="../Assets/StreamingAssets/peerjs.min.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var $ = function (id) { return document.getElementById(id); };
+      var events = [], currentPeer = null, connections = Object.create(null), activeProfile = 'game';
+      var pending = Object.create(null), nextSequence = 1, currentRole = '', localIceResult = null;
+      var results = { version: 1, startedAt: new Date().toISOString(), environment: null, iceGathering: null, peer: null, dataTests: [] };
+      var STUN_URLS = ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302', 'stun:stun4.l.google.com:19302'];
+      var TURN_URLS = ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'];
+      var MAGIC = 0x53484447;
+
+      function time() { return new Date().toISOString(); }
+      function log(kind, message, details) {
+        var entry = { at: time(), kind: kind, message: String(message) };
+        if (details !== undefined) entry.details = details;
+        events.push(entry);
+        var line = entry.at + '  [' + kind + '] ' + entry.message;
+        if (details !== undefined) line += ' ' + JSON.stringify(details);
+        $('events').textContent += line + '\n';
+        $('events').scrollTop = $('events').scrollHeight;
+      }
+      function setStatus(id, text, cls) {
+        var node = $(id);
+        node.textContent = text;
+        node.className = 'state' + (cls ? ' ' + cls : '');
+      }
+      function profileName(profile) { return profile === 'stun' ? 'Google STUN only' : 'SpiderHeck: Google STUN + PeerJS TURN'; }
+      function iceConfig(profile) {
+        var servers = [{ urls: STUN_URLS }];
+        if (profile !== 'stun') servers.push({ urls: TURN_URLS, username: 'peerjs', credential: 'peerjsp' });
+        return { iceServers: servers, iceCandidatePoolSize: 0, sdpSemantics: 'unified-plan' };
+      }
+      function refreshPeers() {
+        var ids = Object.keys(connections).filter(function (id) { return connections[id] && connections[id].open; });
+        $('connected-peers').textContent = ids.join(', ') || '—';
+        $('data-test').disabled = ids.length === 0;
+        $('link-status').textContent = ids.length ? 'Data channel open (' + ids.length + ')' : (currentPeer ? 'Waiting for a data channel' : 'Not connected');
+      }
+      function localEnvironment() {
+        return {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform || 'unknown',
+          language: navigator.language || 'unknown',
+          online: navigator.onLine,
+          secureContext: window.isSecureContext === true,
+          protocol: location.protocol,
+          visibility: document.visibilityState,
+          peerJsLoaded: typeof window.Peer === 'function',
+          webSocketAvailable: typeof window.WebSocket === 'function',
+          webRtcAvailable: typeof window.RTCPeerConnection === 'function',
+          networkType: 'Not exposed by this browser bench (IP addresses are intentionally not collected)'
+        };
+      }
+      function renderChecks(environment, ice) {
+        var list = $('results');
+        list.textContent = '';
+        var checks = [
+          ['PeerJS library loaded', environment.peerJsLoaded],
+          ['WebRTC RTCPeerConnection available', environment.webRtcAvailable],
+          ['Secure context (HTTPS or localhost)', environment.secureContext],
+          ['Browser reports online', environment.online]
+        ];
+        checks.forEach(function (check) {
+          var li = document.createElement('li');
+          li.className = check[1] ? 'pass' : (check[0].indexOf('Secure context') === 0 ? 'warn' : 'fail');
+          li.textContent = check[0] + ': ' + (check[1] ? 'yes' : 'no');
+          list.appendChild(li);
+        });
+        if (ice) {
+          ['host', 'srflx', 'prflx', 'relay'].forEach(function (type) {
+            var li = document.createElement('li');
+            li.className = ice.counts[type] ? (type === 'relay' ? 'pass' : 'pass') : (type === 'srflx' || type === 'relay' ? 'warn' : 'muted');
+            li.textContent = type + ' candidates: ' + ice.counts[type];
+            list.appendChild(li);
+          });
+          if (ice.errors.length) {
+            var err = document.createElement('li'); err.className = 'warn';
+            err.textContent = 'ICE server errors: ' + ice.errors.map(function (e) { return e.code + (e.text ? ' ' + e.text : ''); }).join('; ');
+            list.appendChild(err);
+          }
+        }
+      }
+      function iceInfo(candidateLine) {
+        var parts = candidateLine.split(/\s+/), typeIndex = parts.indexOf('typ');
+        var type = typeIndex >= 0 ? parts[typeIndex + 1] : 'unknown';
+        var protocol = parts.length > 2 ? parts[2].toLowerCase() : 'unknown';
+        return { type: type, protocol: protocol };
+      }
+      function runIceGathering(profile) {
+        var config = iceConfig(profile), counts = { host: 0, srflx: 0, prflx: 0, relay: 0, unknown: 0 };
+        var protocols = Object.create(null), serversSeen = Object.create(null), errors = [], pc, timer;
+        return new Promise(function (resolve) {
+          try { pc = new RTCPeerConnection(config); }
+          catch (error) { resolve({ ok: false, error: error.message, counts: counts, protocols: [], servers: [], errors: errors, durationMs: 0 }); return; }
+          var started = Date.now(), finished = false;
+          function finish(timeout) {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            try { pc.close(); } catch (_) {}
+            resolve({ ok: !timeout && errors.length === 0, timedOut: !!timeout, counts: counts, protocols: Object.keys(protocols), servers: Object.keys(serversSeen), errors: errors, durationMs: Date.now() - started });
+          }
+          timer = setTimeout(function () { finish(true); }, 15000);
+          pc.onicecandidate = function (event) {
+            if (event.candidate) {
+              var parsed = iceInfo(event.candidate.candidate);
+              counts[parsed.type] = (counts[parsed.type] || 0) + 1;
+              protocols[parsed.protocol] = true;
+              if (event.candidate.url) serversSeen[event.candidate.url] = true;
+            } else if (pc.iceGatheringState === 'complete') finish(false);
+          };
+          pc.onicecandidateerror = function (event) {
+            errors.push({ code: event.errorCode || 0, text: event.errorText || '', url: event.url || '' });
+            log('ICE', 'ICE server reported a candidate error', { code: event.errorCode || 0, text: event.errorText || '', url: event.url || '' });
+          };
+          pc.onicegatheringstatechange = function () { if (pc.iceGatheringState === 'complete') finish(false); };
+          try {
+            pc.createDataChannel('ice-gather-only');
+            pc.createOffer().then(function (offer) { return pc.setLocalDescription(offer); }).catch(function (error) {
+              errors.push({ code: 0, text: error.message || String(error), url: '' }); finish(false);
+            });
+          } catch (error) { errors.push({ code: 0, text: error.message || String(error), url: '' }); finish(false); }
+        });
+      }
+      async function runLocalChecks() {
+        var profile = $('ice-profile').value;
+        activeProfile = profile;
+        var env = localEnvironment();
+        results.environment = env;
+        results.profile = profileName(profile);
+        setStatus('environment-status', env.webRtcAvailable ? (env.secureContext ? 'Ready' : 'Available, but not a secure context') : 'WebRTC unavailable', env.webRtcAvailable ? (env.secureContext ? 'pass' : 'warn') : 'fail');
+        setStatus('ice-status', 'Gathering (up to 15 seconds)…', 'warn');
+        $('local-check').disabled = true;
+        renderChecks(env, null);
+        log('CHECK', 'Starting browser and ICE gathering checks', { profile: profileName(profile), secureContext: env.secureContext, online: env.online });
+        if (!env.webRtcAvailable) {
+          var missing = { ok: false, error: 'RTCPeerConnection unavailable', counts: { host: 0, srflx: 0, prflx: 0, relay: 0, unknown: 0 }, protocols: [], servers: [], errors: [], durationMs: 0 };
+          results.iceGathering = missing; localIceResult = missing;
+          setStatus('ice-status', 'Cannot run: WebRTC unavailable', 'fail');
+          renderChecks(env, missing); $('local-check').disabled = false; updateOverall(); return;
+        }
+        try {
+          var ice = await runIceGathering(profile);
+          results.iceGathering = ice; localIceResult = ice;
+          if (ice.timedOut) setStatus('ice-status', 'Timed out after ' + Math.round(ice.durationMs / 1000) + 's', 'warn');
+          else if (ice.error) setStatus('ice-status', 'Failed: ' + ice.error, 'fail');
+          else setStatus('ice-status', 'Completed in ' + ice.durationMs + ' ms', ice.counts.srflx || ice.counts.relay ? 'pass' : 'warn');
+          renderChecks(env, ice);
+          log('ICE', 'Candidate gathering finished', ice);
+        } catch (error) {
+          setStatus('ice-status', 'Failed: ' + error.message, 'fail');
+          log('ERROR', 'ICE gathering failed', { message: error.message || String(error) });
+        }
+        $('local-check').disabled = false;
+        updateOverall();
+      }
+      function addLinkStats(connection) {
+        var pc = connection.peerConnection || (connection._negotiator && connection._negotiator.peerConnection);
+        if (!pc || typeof pc.getStats !== 'function') {
+          log('WEBRTC', 'PeerJS does not expose the underlying RTCPeerConnection in this library build; candidate-pair details unavailable');
+          return;
+        }
+        var item = connection.__benchResult;
+        if (!item) return;
+        var timer = setInterval(async function () {
+          if (!connection.open) { clearInterval(timer); return; }
+          try {
+            var report = await pc.getStats(), byId = Object.create(null), selected = null, transportPairId = null;
+            report.forEach(function (stat) { byId[stat.id] = stat; if (stat.type === 'transport' && stat.selectedCandidatePairId) transportPairId = stat.selectedCandidatePairId; });
+            report.forEach(function (stat) {
+              if (stat.type === 'candidate-pair' && (stat.selected || stat.id === transportPairId || (stat.nominated && stat.state === 'succeeded'))) selected = stat;
+            });
+            if (selected) {
+              var local = byId[selected.localCandidateId] || {}, remote = byId[selected.remoteCandidateId] || {};
+              item.selectedPair = { state: selected.state, nominated: !!selected.nominated, localType: local.candidateType || 'unknown', remoteType: remote.candidateType || 'unknown', protocol: local.protocol || remote.protocol || 'unknown', currentRoundTripTimeMs: typeof selected.currentRoundTripTime === 'number' ? Math.round(selected.currentRoundTripTime * 1000) : null, availableOutgoingBitrate: selected.availableOutgoingBitrate || null };
+              setStatus('overall', 'Connected using ' + item.selectedPair.localType + ' ↔ ' + item.selectedPair.remoteType + ' (' + item.selectedPair.protocol + ')', item.selectedPair.localType === 'relay' || item.selectedPair.remoteType === 'relay' ? 'warn' : 'pass');
+            }
+          } catch (error) { if (!item.statsErrorLogged) { item.statsErrorLogged = true; log('WEBRTC', 'Could not read selected candidate pair stats', { message: error.message || String(error) }); } }
+        }, 2500);
+      }
+      function reportPeerError(error, stage) {
+        var info = { type: error && error.type ? error.type : 'unknown', message: error && error.message ? error.message : String(error) };
+        log('PEERJS ERROR', stage + ': ' + info.type + ' — ' + info.message, info);
+        if (results.peer) { results.peer.errors = results.peer.errors || []; results.peer.errors.push({ at: time(), stage: stage, type: info.type, message: info.message }); }
+        setStatus('signal-status', 'Error: ' + info.type, 'fail');
+        updateOverall();
+      }
+      function attachConnection(connection, direction) {
+        var id = connection.peer;
+        connection.__benchResult = { peerId: id, direction: direction, openedAt: null, closedAt: null, selectedPair: null, packetCounts: { requestsSent: 0, requestsReceived: 0, echoesSent: 0, echoesReceived: 0, echoTimeouts: 0 } };
+        if (results.peer) results.peer.links.push(connection.__benchResult);
+        if (direction === 'inbound') connections[id] = connection;
+        connection.on('open', function () {
+          connections[id] = connection;
+          connection.__benchResult.openedAt = time();
+          log('DATA CHANNEL', 'Reliable raw data channel opened with ' + id + ' (' + direction + ')');
+          setStatus('link-status', 'Data channel open with ' + id, 'pass');
+          refreshPeers(); addLinkStats(connection); updateOverall();
+        });
+        connection.on('data', function (data) {
+          processPacket(connection, data).catch(function (error) { log('DATA ERROR', 'Could not read data-channel message', { message: error.message || String(error) }); });
+        });
+        connection.on('close', function () {
+          if (connections[id] === connection) delete connections[id];
+          connection.__benchResult.closedAt = time();
+          log('DATA CHANNEL', 'Data channel closed with ' + id);
+          refreshPeers(); updateOverall();
+        });
+        connection.on('error', function (error) { reportPeerError(error, 'data connection to ' + id); });
+        if (connection.open) {
+          connections[id] = connection;
+          connection.__benchResult.openedAt = time();
+          log('DATA CHANNEL', 'Data channel already open with ' + id + ' (' + direction + ')');
+          addLinkStats(connection); refreshPeers();
+        }
+      }
+      async function bytesFrom(data) {
+        if (data instanceof ArrayBuffer) return new Uint8Array(data);
+        if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        if (typeof Blob !== 'undefined' && data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+        return null;
+      }
+      async function processPacket(connection, data) {
+        var bytes = await bytesFrom(data);
+        if (!bytes || bytes.byteLength < 16) { log('DATA', 'Received non-bench or short payload', { kind: typeof data, bytes: bytes ? bytes.byteLength : null }); return; }
+        var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        if (view.getUint32(0, false) !== MAGIC) { log('DATA', 'Received unrecognized binary payload (' + bytes.byteLength + ' bytes)'); return; }
+        var sequence = view.getUint32(4, false), declaredSize = view.getUint32(8, false), flags = view.getUint32(12, false), pendingItem = pending[sequence];
+        if (declaredSize !== bytes.byteLength) { log('DATA ERROR', 'Packet length did not match its header', { declaredBytes: declaredSize, actualBytes: bytes.byteLength }); return; }
+        if (flags === 1) {
+          if (connection.__benchResult) connection.__benchResult.packetCounts.echoesReceived++;
+          if (!pendingItem) { log('DATA', 'Received an echo with no matching local test', { sequence: sequence, bytes: bytes.byteLength }); return; }
+          clearTimeout(pendingItem.timer); delete pending[sequence];
+          var duration = performance.now() - pendingItem.sentAt;
+          pendingItem.resolve({ ok: true, sizeBytes: bytes.byteLength, durationMs: Math.round(duration * 100) / 100 });
+          return;
+        }
+        if (flags !== 0) { log('DATA ERROR', 'Unknown packet flags', { flags: flags }); return; }
+        if (connection.__benchResult) connection.__benchResult.packetCounts.requestsReceived++;
+        log('DATA', 'Received a diagnostic request (' + declaredSize + ' bytes) from ' + connection.peer);
+        if (!connection.open) return;
+        view.setUint32(12, 1, false);
+        try {
+          connection.send(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+          if (connection.__benchResult) connection.__benchResult.packetCounts.echoesSent++;
+        } catch (error) {
+          log('DATA ERROR', 'Echo failed for ' + declaredSize + '-byte packet', { message: error.message || String(error) });
+          if (connection.__benchResult) connection.__benchResult.echoError = error.message || String(error);
+        }
+      }
+      function makePacket(sequence, size) {
+        var bytes = new Uint8Array(size), view = new DataView(bytes.buffer);
+        view.setUint32(0, MAGIC, false); view.setUint32(4, sequence, false); view.setUint32(8, size, false); view.setUint32(12, 0, false);
+        for (var i = 16; i < size; i++) bytes[i] = (i * 31 + sequence) & 255;
+        return bytes.buffer;
+      }
+      function waitForEcho(connection, size) {
+        var sequence = nextSequence++;
+        return new Promise(function (resolve) {
+          var item = { sentAt: performance.now(), resolve: resolve, timer: null };
+          item.timer = setTimeout(function () {
+            delete pending[sequence];
+            if (connection.__benchResult) connection.__benchResult.packetCounts.echoTimeouts++;
+            resolve({ ok: false, sizeBytes: size, reason: 'echo timeout (5 seconds)' });
+          }, 5000);
+          pending[sequence] = item;
+          try {
+            connection.send(makePacket(sequence, size));
+            if (connection.__benchResult) connection.__benchResult.packetCounts.requestsSent++;
+          } catch (error) { clearTimeout(item.timer); delete pending[sequence]; resolve({ ok: false, sizeBytes: size, reason: error.message || String(error) }); }
+        });
+      }
+      async function runDataTests() {
+        var ids = Object.keys(connections).filter(function (id) { return connections[id] && connections[id].open; });
+        if (!ids.length) return;
+        if (ids.length > 1) log('INFO', 'Multiple peers connected; size test will use ' + ids[0] + ' only');
+        var connection = connections[ids[0]], sizes = [1024, 16384, 65536, 131072, 262144], suite = { at: time(), peerId: ids[0], profile: profileName(activeProfile), tests: [] };
+        results.dataTests.push(suite);
+        $('data-test').disabled = true;
+        log('DATA TEST', 'Starting reliable raw binary echo tests', { peerId: ids[0], sizesBytes: sizes });
+        for (var i = 0; i < sizes.length; i++) {
+          if (!connection.open) { suite.tests.push({ sizeBytes: sizes[i], ok: false, reason: 'channel closed before test' }); continue; }
+          var result = await waitForEcho(connection, sizes[i]);
+          suite.tests.push(result);
+          log(result.ok ? 'PASS' : 'FAIL', (result.ok ? 'echoed ' : 'failed ') + sizes[i] + ' bytes' + (result.ok ? ' in ' + result.durationMs + ' ms' : ': ' + result.reason), result);
+          if (!result.ok && !connection.open) {
+            for (var j = i + 1; j < sizes.length; j++) suite.tests.push({ sizeBytes: sizes[j], ok: false, reason: 'channel closed after previous size test' });
+            break;
+          }
+        }
+        $('data-test').disabled = false;
+        updateOverall();
+      }
+      function startPeer(role) {
+        if (!window.Peer) { log('ERROR', 'PeerJS library failed to load; check the local StreamingAssets path'); setStatus('signal-status', 'PeerJS library missing', 'fail'); return; }
+        stopPeer(false);
+        var profile = $('ice-profile').value, typedId = $('peer-id').value.trim(), id;
+        if (role === 'host') {
+          id = typedId || ('shdiag' + Math.random().toString(36).slice(2, 10));
+          if (!/^[A-Za-z0-9_-]{3,48}$/.test(id)) { setStatus('signal-status', 'Use a 3–48 character ID with letters, digits, _ or -', 'fail'); return; }
+          $('peer-id').value = id;
+        } else {
+          id = typedId;
+          if (!id) { setStatus('signal-status', 'Enter the host peer ID first', 'warn'); return; }
+        }
+        currentRole = role; activeProfile = profile;
+        var cfg = iceConfig(profile), peer;
+        results.peer = { role: role, peerId: null, targetPeerId: role === 'join' ? id : null, profile: profileName(profile), signaling: 'connecting', errors: [], links: [] };
+        setStatus('signal-status', 'Connecting to PeerJS signaling…', 'warn');
+        setStatus('link-status', 'Waiting for signaling', 'warn');
+        $('host').disabled = $('join').disabled = true; $('close').disabled = false;
+        log('SIGNALING', (role === 'host' ? 'Opening host peer ID ' : 'Creating guest peer for ') + id, { profile: profileName(profile) });
+        try { peer = role === 'host' ? new Peer(id, { debug: 1, config: cfg }) : new Peer({ debug: 1, config: cfg }); }
+        catch (error) { reportPeerError(error, 'create PeerJS peer'); $('host').disabled = $('join').disabled = false; $('close').disabled = true; return; }
+        currentPeer = peer;
+        peer.on('open', function (openedId) {
+          if (currentPeer !== peer) return;
+          results.peer.peerId = openedId; results.peer.signaling = 'open';
+          setStatus('signal-status', 'Connected (' + openedId + ')', 'pass');
+          log('SIGNALING', 'PeerJS signaling opened with peer ID ' + openedId);
+          if (role === 'host') { $('peer-id').value = openedId; setStatus('link-status', 'Hosting — waiting for guest', 'warn'); }
+          else {
+            setStatus('link-status', 'Signaling ready — connecting data channel', 'warn');
+            try { attachConnection(peer.connect(id, { reliable: true, serialization: 'raw' }), 'outbound'); }
+            catch (error) { reportPeerError(error, 'connect to host ' + id); }
+          }
+          updateOverall();
+        });
+        peer.on('connection', function (connection) { attachConnection(connection, 'inbound'); });
+        peer.on('error', function (error) { reportPeerError(error, 'PeerJS peer'); });
+        peer.on('disconnected', function () {
+          if (currentPeer !== peer) return;
+          if (results.peer) results.peer.signaling = 'disconnected';
+          setStatus('signal-status', 'Signaling disconnected (data channels may remain open)', 'warn');
+          log('SIGNALING', 'PeerJS signaling socket disconnected; existing WebRTC data channels may still work');
+          updateOverall();
+        });
+        peer.on('close', function () {
+          if (currentPeer !== peer) return;
+          if (results.peer) results.peer.signaling = 'closed';
+          setStatus('signal-status', 'Peer closed', 'warn'); log('SIGNALING', 'PeerJS peer closed'); updateOverall();
+        });
+      }
+      function stopPeer(writeLog) {
+        if (currentPeer) {
+          try { currentPeer.destroy(); } catch (error) { log('ERROR', 'Peer destroy threw', { message: error.message || String(error) }); }
+          currentPeer = null;
+        }
+        connections = Object.create(null);
+        Object.keys(pending).forEach(function (id) { clearTimeout(pending[id].timer); pending[id].resolve({ ok: false, reason: 'bench stopped' }); delete pending[id]; });
+        $('host').disabled = $('join').disabled = false; $('close').disabled = true;
+        setStatus('signal-status', 'Stopped', 'muted'); setStatus('link-status', 'Not connected', 'muted');
+        $('connected-peers').textContent = '—'; $('data-test').disabled = true;
+        if (writeLog !== false) log('ACTION', 'Stopped PeerJS peer and closed test connections');
+      }
+      function updateOverall() {
+        var peer = results.peer;
+        if (peer && peer.errors && peer.errors.length) setStatus('overall', 'PeerJS reported ' + peer.errors.length + ' error(s); use the log and JSON report to diagnose', 'warn');
+        else if (peer && peer.signaling === 'open' && !Object.keys(connections).some(function (id) { return connections[id] && connections[id].open; })) setStatus('overall', 'Signaling works; waiting for a WebRTC data channel. If it times out, inspect ICE/firewall errors.', 'warn');
+        else if (peer && peer.signaling === 'open') setStatus('overall', 'Signaling is open. Data-channel and selected ICE-pair results will appear here.', 'pass');
+        else if (localIceResult && !localIceResult.counts.srflx && !localIceResult.counts.relay) setStatus('overall', 'No server-reflexive or relay ICE candidates gathered on this network.', 'warn');
+      }
+      function reportObject() {
+        return { ...results, generatedAt: time(), networkLabel: $('network-label').value.trim(), profile: profileName($('ice-profile').value), events: events.slice(), note: 'No raw ICE candidate strings or IP addresses are collected by this bench. PeerJS signaling and selected ICE stats are browser/service dependent.' };
+      }
+      function downloadReport() {
+        var blob = new Blob([JSON.stringify(reportObject(), null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob), link = document.createElement('a');
+        link.href = url; link.download = 'spiderheck-network-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+        document.body.appendChild(link); link.click(); link.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        log('REPORT', 'Downloaded JSON report');
+      }
+      async function copySummary() {
+        var env = results.environment || localEnvironment(), ice = results.iceGathering;
+        var peer = results.peer;
+        var text = [
+          'SpiderHeck PeerJS/WebRTC diagnostic',
+          'Network: ' + ($('network-label').value.trim() || '(not labeled)'),
+          'Profile: ' + profileName($('ice-profile').value),
+          'Browser: ' + env.userAgent,
+          'Secure context: ' + env.secureContext + '; online: ' + env.online,
+          'ICE gathering: ' + (ice ? JSON.stringify({ counts: ice.counts, protocols: ice.protocols, servers: ice.servers, errors: ice.errors, timedOut: ice.timedOut }) : 'not tested — run browser + ICE gathering checks'),
+          'Peer/signaling: ' + (peer ? peer.signaling + (peer.errors.length ? '; errors=' + peer.errors.map(function (e) { return e.type + ': ' + e.message; }).join(' | ') : '') : 'not tested'),
+          'Links: ' + JSON.stringify(peer && peer.links ? peer.links.map(function (link) { return { peerId: link.peerId, direction: link.direction, selectedPair: link.selectedPair, packetCounts: link.packetCounts, echoError: link.echoError || null }; }) : []),
+          'Data tests: ' + JSON.stringify(results.dataTests)
+        ].join('\n');
+        try { await navigator.clipboard.writeText(text); log('REPORT', 'Copied summary to clipboard'); }
+        catch (_) { window.prompt('Copy diagnostic summary:', text); }
+      }
+      $('local-check').addEventListener('click', runLocalChecks);
+      $('host').addEventListener('click', function () { startPeer('host'); });
+      $('join').addEventListener('click', function () { startPeer('join'); });
+      $('close').addEventListener('click', function () { stopPeer(true); });
+      $('data-test').addEventListener('click', runDataTests);
+      $('download').addEventListener('click', downloadReport);
+      $('copy').addEventListener('click', copySummary);
+      $('clear').addEventListener('click', function () { events = []; $('events').textContent = ''; log('INFO', 'Visible event log cleared; structured test results are retained'); });
+      $('ice-profile').addEventListener('change', function () { activeProfile = this.value; log('CONFIG', 'ICE profile selected: ' + profileName(activeProfile)); });
+      window.addEventListener('online', function () { log('BROWSER', 'Browser reports network online'); });
+      window.addEventListener('offline', function () { log('BROWSER', 'Browser reports network offline'); });
+      window.addEventListener('error', function (event) { log('BROWSER ERROR', event.message || 'Uncaught browser error'); });
+      window.addEventListener('unhandledrejection', function (event) { log('BROWSER ERROR', 'Unhandled promise rejection: ' + String(event.reason)); });
+      if (!window.Peer) log('ERROR', 'PeerJS library unavailable at ../Assets/StreamingAssets/peerjs.min.js; serve this page from the project so its relative script path resolves');
+      else log('READY', 'Bench loaded with local PeerJS library. No Unity runtime is loaded.');
+      setStatus('environment-status', 'Not checked', 'muted');
+      setStatus('ice-status', 'Not checked', 'muted');
+    }());
+  </script>
+</body>
+</html>
