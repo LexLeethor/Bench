@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Repo Editor</title>
+<style>
+:root{--bg:#f2f4f7;--pn:#fff;--fg:#16202b;--mut:#667085;--ln:#d8dde4;--ac:#2563eb;--acf:#fff;--ok:#15803d;--wr:#b45309;--bd:#b42318}
+@media (prefers-color-scheme:dark){:root{--bg:#12161b;--pn:#1a2027;--fg:#e4e8ee;--mut:#8b95a3;--ln:#2d353f;--ac:#5b92f5;--acf:#0a1220;--ok:#4ade80;--wr:#f0b45a;--bd:#f2766b}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:var(--pn);border-bottom:1px solid var(--ln)}
+header h1{font-size:15px;margin:0 8px 0 0}
+input,select,button,textarea{font:inherit;color:inherit}
+input[type=text],input[type=password],select{background:var(--bg);border:1px solid var(--ln);border-radius:6px;padding:6px 8px;min-width:0}
+button{background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:6px 10px;cursor:pointer}
+button:hover{border-color:var(--ac)}
+button.pri{background:var(--ac);color:var(--acf);border-color:var(--ac);font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+#tok{width:260px;max-width:100%}
+label.chk{color:var(--mut);display:flex;gap:4px;align-items:center}
+main{flex:1;display:grid;grid-template-columns:320px 1fr;min-height:0}
+aside{background:var(--pn);border-right:1px solid var(--ln);display:flex;flex-direction:column;min-height:0;padding:10px;gap:8px}
+aside select,aside input[type=text]{width:100%}
+.row{display:flex;gap:6px;flex-wrap:wrap}
+details{border:1px solid var(--ln);border-radius:6px;padding:6px 8px}
+summary{cursor:pointer;color:var(--mut)}
+#list{flex:1;overflow:auto;margin:0;padding:0;list-style:none;border-top:1px solid var(--ln)}
+#list li{display:flex;gap:8px;padding:4px 6px;cursor:pointer;border-radius:4px;word-break:break-all}
+#list li:hover{background:var(--bg)}
+#list li.on{background:var(--ac);color:var(--acf)}
+#list b{width:12px;flex:none;font-weight:700}
+.M{color:var(--wr)}.A{color:var(--ok)}.D{color:var(--bd)}
+#list li.on b{color:inherit}
+section{display:flex;flex-direction:column;min-width:0;min-height:0}
+#bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--ln);background:var(--pn)}
+#path{font-weight:600;flex:1;word-break:break-all}
+#note{color:var(--mut);padding:0 12px}
+#ed{flex:1;width:100%;border:0;resize:none;padding:12px;background:var(--bg);font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;tab-size:2;white-space:pre;overflow:auto}
+footer{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--pn);border-top:1px solid var(--ln)}
+#cm{flex:1;min-width:180px}
+#status{padding:4px 14px;color:var(--mut);background:var(--pn);border-top:1px solid var(--ln);min-height:26px}
+#status.bad{color:var(--bd)}
+@media (max-width:760px){main{grid-template-columns:1fr;grid-template-rows:42% 1fr}aside{border-right:0;border-bottom:1px solid var(--ln)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Repo Editor</h1>
+  <input id="tok" type="password" placeholder="GitHub token" autocomplete="off" aria-label="GitHub token">
+  <button id="conn" class="pri">Connect</button>
+  <label class="chk"><input id="rem" type="checkbox"> Remember on this device</label>
+  <span id="who"></span>
+</header>
+<main>
+  <aside>
+    <select id="repo" aria-label="Repository"><option value="">Connect to list repositories</option></select>
+    <div class="row">
+      <select id="br" aria-label="Branch" style="flex:1"></select>
+      <button id="pull" title="Fetch the latest tree from GitHub">Pull</button>
+      <button id="nbr">New branch</button>
+    </div>
+    <details>
+      <summary>Create repository</summary>
+      <div class="row" style="margin-top:6px">
+        <input id="nrn" type="text" placeholder="repo-name" style="flex:1">
+        <label class="chk"><input id="nrp" type="checkbox" checked> Private</label>
+        <button id="ncr">Create</button>
+      </div>
+    </details>
+    <div class="row">
+      <button id="nf">New file</button>
+      <button id="af">Add files</button>
+      <button id="ad">Add folder</button>
+    </div>
+    <input id="dir" type="text" placeholder="Upload into folder (optional)">
+    <input id="q" type="text" placeholder="Filter files">
+    <ul id="list"></ul>
+    <input id="fin" type="file" multiple hidden>
+    <input id="din" type="file" webkitdirectory hidden>
+  </aside>
+  <section>
+    <div id="bar">
+      <span id="path">No file open</span>
+      <button id="dl">Download</button>
+      <button id="rv">Revert</button>
+      <button id="del">Delete</button>
+    </div>
+    <div id="note"></div>
+    <textarea id="ed" spellcheck="false" disabled aria-label="File contents"></textarea>
+    <footer>
+      <input id="cm" type="text" placeholder="Commit message">
+      <span id="cnt" style="color:var(--mut)">0 changes</span>
+      <button id="push" class="pri">Commit and push</button>
+    </footer>
+  </section>
+</main>
+<div id="status">Paste a token and connect. It is only ever sent to api.github.com.</div>
+<script>
+const $=s=>document.querySelector(s),enc=new TextEncoder();
+const S={token:'',repos:[],repo:'',branches:[],branch:'',head:'',base:new Map(),ch:new Map(),cache:new Map(),cur:''};
+const b64=u=>{let s='';for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)};
+const unb64=t=>Uint8Array.from(atob(t.replace(/\s/g,'')),c=>c.charCodeAt(0));
+const same=(a,b)=>{if(a.length!==b.length)return false;for(let i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true};
+const msg=(t,bad)=>{const m=$('#status');m.textContent=t;m.className=bad?'bad':''};
+const POST=b=>({method:'POST',body:JSON.stringify(b)});
+
+async function api(p,o={}){
+  const r=await fetch('https://api.github.com'+p,{...o,headers:{Authorization:'Bearer '+S.token,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',...(o.body?{'Content-Type':'application/json'}:{})}});
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(r.status+' '+(e.message||r.statusText))}
+  return r.status===204?null:r.json();
+}
+async function run(label,fn){try{msg(label+'…');await fn();msg(label+': done')}catch(e){msg(label+' failed. '+e.message,1)}}
+const dirty=()=>S.ch.size&&!confirm('Discard '+S.ch.size+' unpushed change(s)?');
+
+// ---- connect and repos
+try{const t=localStorage.getItem('gh_token');if(t){$('#tok').value=t;$('#rem').checked=true}}catch{}
+$('#conn').onclick=()=>run('Connecting',async()=>{
+  S.token=$('#tok').value.trim();
+  const u=await api('/user');$('#who').textContent='@'+u.login;
+  try{$('#rem').checked?localStorage.setItem('gh_token',S.token):localStorage.removeItem('gh_token')}catch{}
+  await loadRepos();
+});
+async function loadRepos(sel){
+  S.repos=await api('/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member');
+  const s=$('#repo');s.innerHTML='<option value="">Choose a repository</option>';
+  for(const r of S.repos){const o=document.createElement('option');o.value=r.full_name;o.textContent=r.full_name+(r.private?' (private)':'');s.append(o)}
+  if(sel)s.value=sel;
+}
+$('#repo').onchange=e=>{
+  if(dirty()){e.target.value=S.repo;return}
+  if(e.target.value)run('Opening repository',()=>openRepo(e.target.value));
+};
+async function openRepo(full,keep){
+  S.repo=full;S.ch.clear();S.cur='';showEditor();
+  const bs=await api(`/repos/${full}/branches?per_page=100`);
+  S.branches=bs.map(b=>({name:b.name,sha:b.commit.sha}));
+  const def=(S.repos.find(r=>r.full_name===full)||{}).default_branch;
+  const pick=S.branches.find(b=>b.name===keep)||S.branches.find(b=>b.name===def)||S.branches[0];
+  fillBranches();
+  if(!pick){S.branch='';S.head='';S.base.clear();render();msg('This repository has no commits yet. Create one with a README on GitHub, then reconnect.',1);return}
+  $('#br').value=pick.name;await setBranch(pick.name);
+}
+function fillBranches(){const s=$('#br');s.innerHTML='';for(const b of S.branches){const o=document.createElement('option');o.value=o.textContent=b.name;s.append(o)}}
+$('#br').onchange=e=>{
+  if(dirty()){e.target.value=S.branch;return}
+  S.ch.clear();run('Loading branch',()=>setBranch(e.target.value));
+};
+async function setBranch(name){S.branch=name;S.head=S.branches.find(b=>b.name===name).sha;S.cur='';showEditor();await loadTree()}
+async function loadTree(){
+  const t=await api(`/repos/${S.repo}/git/trees/${S.head}?recursive=1`);
+  S.base=new Map(t.tree.filter(x=>x.type==='blob').map(x=>[x.path,{sha:x.sha,mode:x.mode}]));
+  S.cache.clear();render();
+  if(t.truncated)msg('This repository is very large; the file list is incomplete.',1);
+}
+$('#pull').onclick=()=>{
+  if(!S.repo||dirty())return;
+  const keep=S.branch,cur=S.cur;
+  run('Pulling',async()=>{await openRepo(S.repo,keep);if(S.base.has(cur))await openFile(cur)});
+};
+$('#nbr').onclick=()=>{
+  if(!S.head)return;
+  const n=(prompt('New branch name (created from the current branch):')||'').trim();if(!n)return;
+  run('Creating branch',async()=>{
+    await api(`/repos/${S.repo}/git/refs`,POST({ref:'refs/heads/'+n,sha:S.head}));
+    S.branches.push({name:n,sha:S.head});fillBranches();$('#br').value=S.branch=n;
+  });
+};
+$('#ncr').onclick=()=>{
+  const name=$('#nrn').value.trim();if(!name||dirty())return;
+  run('Creating repository',async()=>{
+    const r=await api('/user/repos',POST({name,private:$('#nrp').checked,auto_init:true}));
+    await loadRepos(r.full_name);await openRepo(r.full_name);$('#nrn').value='';
+  });
+};
+
+// ---- file list and editor
+function status(p){return S.ch.has(p)?(S.ch.get(p).bytes===null?'D':S.base.has(p)?'M':'A'):''}
+function render(){
+  const q=$('#q').value.toLowerCase(),ul=$('#list');ul.innerHTML='';
+  const paths=[...new Set([...S.base.keys(),...S.ch.keys()])].sort().filter(p=>p.toLowerCase().includes(q));
+  for(const p of paths.slice(0,500)){
+    const li=document.createElement('li'),b=document.createElement('b'),s=status(p);
+    b.textContent=s;b.className=s;li.append(b,p);li.dataset.p=p;if(p===S.cur)li.className='on';ul.append(li);
+  }
+  if(paths.length>500){const li=document.createElement('li');li.textContent='… '+(paths.length-500)+' more. Use the filter.';ul.append(li)}
+  if(!paths.length){const li=document.createElement('li');li.textContent=S.repo?'No files match.':'Nothing open yet.';ul.append(li)}
+  $('#cnt').textContent=S.ch.size+' change'+(S.ch.size===1?'':'s');
+}
+$('#list').onclick=e=>{const li=e.target.closest('li');if(li&&li.dataset.p)run('Loading',()=>openFile(li.dataset.p))};
+$('#q').oninput=render;
+async function getBytes(p){
+  if(S.ch.has(p))return S.ch.get(p).bytes;
+  if(S.cache.has(p))return S.cache.get(p);
+  const j=await api(`/repos/${S.repo}/git/blobs/${S.base.get(p).sha}`),u=unb64(j.content);
+  S.cache.set(p,u);return u;
+}
+async function openFile(p){S.cur=p;showEditor(await getBytes(p))}
+function showEditor(u){
+  const ta=$('#ed');$('#path').textContent=S.cur||'No file open';$('#note').textContent='';
+  if(!S.cur||u===undefined){ta.value='';ta.disabled=true;render();return}
+  if(u===null){ta.value='';ta.disabled=true;$('#note').textContent='Marked for deletion. Revert to keep it.'}
+  else try{ta.value=new TextDecoder('utf-8',{fatal:true}).decode(u);ta.disabled=false}
+  catch{ta.value='';ta.disabled=true;$('#note').textContent='Binary file ('+u.length+' bytes). You can download or replace it, not edit it.'}
+  render();
+}
+$('#ed').oninput=()=>{
+  const p=S.cur;if(!p)return;
+  const b=enc.encode($('#ed').value),o=S.cache.get(p);
+  if(S.base.has(p)&&o&&same(b,o))S.ch.delete(p);else S.ch.set(p,{bytes:b});
+  render();
+};
+$('#ed').onkeydown=e=>{
+  if(e.key==='Tab'){e.preventDefault();const t=e.target,s=t.selectionStart;t.setRangeText('  ',s,t.selectionEnd,'end');t.dispatchEvent(new Event('input'))}
+};
+$('#nf').onclick=()=>{
+  if(!S.repo)return;
+  const p=(prompt('Path for the new file (for example src/app.js):')||'').trim().replace(/^\/+/,'');if(!p)return;
+  S.ch.set(p,{bytes:new Uint8Array()});S.cur=p;showEditor(new Uint8Array());$('#ed').focus();
+};
+$('#del').onclick=()=>{
+  const p=S.cur;if(!p)return;
+  if(S.base.has(p)){S.ch.set(p,{bytes:null});showEditor(null)}else{S.ch.delete(p);S.cur='';showEditor()}
+};
+$('#rv').onclick=()=>{const p=S.cur;if(!p)return;S.ch.delete(p);if(S.base.has(p))run('Reverting',()=>openFile(p));else{S.cur='';showEditor()}};
+$('#dl').onclick=()=>run('Preparing download',async()=>{
+  if(!S.cur)return;const u=await getBytes(S.cur);if(!u)throw new Error('This file is marked for deletion.');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([u]));a.download=S.cur.split('/').pop();a.click();
+});
+
+// ---- load files from this device
+function pick(inp){if(!S.repo){msg('Open a repository first.',1);return}inp.click()}
+$('#af').onclick=()=>pick($('#fin'));$('#ad').onclick=()=>pick($('#din'));
+for(const id of['#fin','#din'])$(id).onchange=async e=>{
+  const dir=$('#dir').value.trim().replace(/^\/+|\/+$/g,''),fs=[...e.target.files];let last='';
+  for(const f of fs){
+    const rel=f.webkitRelativePath||f.name,p=dir?dir+'/'+rel:rel;
+    S.ch.set(p,{bytes:new Uint8Array(await f.arrayBuffer())});last=p;
+  }
+  e.target.value='';render();msg('Added '+fs.length+' file(s) to your pending changes.');
+  if(fs.length===1)run('Loading',()=>openFile(last));
+};
+
+// ---- commit and push (Git Data API: one commit for all changes)
+$('#push').onclick=()=>run('Pushing',async()=>{
+  if(!S.ch.size)throw new Error('There are no changes to push.');
+  const r='/repos/'+S.repo,message=$('#cm').value.trim()||'Update via Repo Editor';
+  const ref=await api(`${r}/git/ref/heads/${S.branch}`);
+  if(ref.object.sha!==S.head)throw new Error('The branch has new commits on GitHub. Pull first, or use New branch to push your changes elsewhere.');
+  const c=await api(`${r}/git/commits/${S.head}`),tree=[];
+  for(const [path,v] of S.ch){
+    const mode=(S.base.get(path)||{}).mode||'100644';
+    if(v.bytes===null)tree.push({path,mode,type:'blob',sha:null});
+    else{const bl=await api(`${r}/git/blobs`,POST({content:b64(v.bytes),encoding:'base64'}));tree.push({path,mode,type:'blob',sha:bl.sha})}
+  }
+  const nt=await api(`${r}/git/trees`,POST({base_tree:c.tree.sha,tree}));
+  const nc=await api(`${r}/git/commits`,POST({message,tree:nt.sha,parents:[S.head]}));
+  await api(`${r}/git/refs/heads/${S.branch}`,{method:'PATCH',body:JSON.stringify({sha:nc.sha})});
+  const cur=S.cur;S.ch.clear();S.head=nc.sha;S.branches.find(b=>b.name===S.branch).sha=nc.sha;$('#cm').value='';
+  await loadTree();S.cur='';if(S.base.has(cur))await openFile(cur);else showEditor();
+});
+render();
+</script>
+</body>
+</html>
