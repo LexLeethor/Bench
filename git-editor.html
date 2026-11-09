@@ -235,6 +235,7 @@ footer { height: 44px; background: var(--bg-side); border-top: 1px solid var(--b
       <select id="br" class="flex-1"></select>
       <button id="pull" title="Pull latest tree"><i class="fa-solid fa-rotate"></i></button>
       <button id="nbr" title="Create branch"><i class="fa-solid fa-code-fork"></i></button>
+      <button id="fork-repo" title="Duplicate (Pseudo-Fork) repository under your account"><i class="fa-solid fa-clone"></i> Fork</button>
     </div>
 
     <!-- Navigation Switcher -->
@@ -348,6 +349,21 @@ footer { height: 44px; background: var(--bg-side); border-top: 1px solid var(--b
 </div>
 
 <div id="toast-area"></div>
+
+<!-- Command Palette Modal -->
+<div id="cmd-modal" class="modal-overlay">
+  <div class="modal">
+    <h3><i class="fa-solid fa-terminal"></i> Command Palette</h3>
+    <input id="cmd-input" type="text" placeholder="Type a command (e.g. Commit, Pull, New file)...">
+    <div id="cmd-list" style="display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto">
+      <button onclick="$('#cmd-modal').classList.remove('open');$('#push').click()"><i class="fa-solid fa-cloud-arrow-up"></i> Commit & Push Changes</button>
+      <button onclick="$('#cmd-modal').classList.remove('open');$('#pull').click()"><i class="fa-solid fa-rotate"></i> Pull Latest Branch Changes</button>
+      <button onclick="$('#cmd-modal').classList.remove('open');$('#nf').click()"><i class="fa-solid fa-file-circle-plus"></i> Create New File</button>
+      <button onclick="$('#cmd-modal').classList.remove('open');$('#fork-repo').click()"><i class="fa-solid fa-clone"></i> Duplicate (Fork) Repository</button>
+      <button onclick="$('#cmd-modal').classList.remove('open');$('#theme-toggle').click()"><i class="fa-solid fa-circle-half-stroke"></i> Toggle Theme</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // Global State Storage
@@ -473,7 +489,15 @@ async function run(label, fn) {
 // --- Auth & Setup ---
 try {
   const t = localStorage.getItem('gh_token');
-  if (t) { $('#tok').value = t; $('#rem').checked = true; }
+  if (t) { 
+    $('#tok').value = t; 
+    $('#rem').checked = true;
+    // Auto-connect on startup if saved token exists
+    window.addEventListener('DOMContentLoaded', () => {
+      setStatus('Auto-connecting with saved token…');
+      $('#conn').click();
+    });
+  }
 } catch {}
 
 $('#conn').onclick = () => run('Connecting', async () => {
@@ -1089,6 +1113,74 @@ dropZone.ondrop = e => {
 $('#push').onclick = () => run('Commit & Push', () => pushChanges(false));
 $('#push-pr').onclick = () => run('Push & Create PR', () => pushChanges(true));
 
+// --- Pseudo-Fork (Duplicate) Repository Workflow ---
+$('#fork-repo').onclick = () => {
+  if (!S.repo || !S.head) {
+    toast('Please connect and select an active repository first.', 'info');
+    return;
+  }
+  const defaultName = S.repo.split('/')[1] + '-copy';
+  const newName = (prompt(`Enter new repository name to duplicate '${S.repo}':`, defaultName) || '').trim();
+  if (!newName) return;
+  const isPrivate = confirm("Make the duplicated repository private? Click 'OK' for Private, 'Cancel' for Public.");
+
+  run('Duplicating repository', async () => {
+    toast(`Creating repository '${newName}'...`, 'info');
+    
+    // 1. Create target repository
+    const targetRepo = await api('/user/repos', POST({ name: newName, private: isPrivate, auto_init: false }));
+    const targetFullName = targetRepo.full_name;
+
+    // 2. Fetch full tree from source repository
+    const srcTreeData = await api(`/repos/${S.repo}/git/trees/${S.head}?recursive=1`);
+    const blobs = srcTreeData.tree.filter(item => item.type === 'blob');
+
+    toast(`Copying ${blobs.length} file(s) to ${targetFullName}...`, 'info');
+
+    // 3. Re-create blobs in target repository & construct tree payload
+    const newTreeItems = [];
+    for (const blob of blobs) {
+      // Get source blob data
+      const sourceBlob = await api(`/repos/${S.repo}/git/blobs/${blob.sha}`);
+      
+      // Create identical blob in new repo
+      const newBlob = await api(`/repos/${targetFullName}/git/blobs`, POST({
+        content: sourceBlob.content,
+        encoding: sourceBlob.encoding
+      }));
+
+      newTreeItems.push({
+        path: blob.path,
+        mode: blob.mode,
+        type: 'blob',
+        sha: newBlob.sha
+      });
+    }
+
+    // 4. Create root tree in target repo
+    const newTree = await api(`/repos/${targetFullName}/git/trees`, POST({ tree: newTreeItems }));
+
+    // 5. Create initial commit
+    const newCommit = await api(`/repos/${targetFullName}/git/commits`, POST({
+      message: `Initial commit duplicated from ${S.repo}`,
+      tree: newTree.sha
+    }));
+
+    // 6. Set main branch reference
+    const defaultBr = targetRepo.default_branch || 'main';
+    await api(`/repos/${targetFullName}/git/refs`, POST({
+      ref: `refs/heads/${defaultBr}`,
+      sha: newCommit.sha
+    }));
+
+    toast(`Repository successfully duplicated as '${targetFullName}'!`, 'success');
+
+    // 7. Auto-switch workspace state to the new repository
+    await loadRepos(targetFullName);
+    await openRepo(targetFullName);
+  });
+};
+
 async function pushChanges(createPR) {
   if (!S.ch.size) throw new Error('No pending changes to commit.');
   const r = '/repos/' + S.repo;
@@ -1142,13 +1234,19 @@ window.onkeydown = e => {
     $('#find-bar').classList.remove('hidden');
     $('#find-input').focus();
   }
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
     e.preventDefault();
-    $('#cmd-modal').classList.add('open');
-    $('#cmd-input').focus();
+    const modal = $('#cmd-modal');
+    if (modal) {
+      modal.classList.add('open');
+      $('#cmd-input')?.focus();
+    }
   }
 };
-$('#cmd-modal').onclick = e => { if (e.target === $('#cmd-modal')) $('#cmd-modal').classList.remove('open'); };
+const cmdModal = $('#cmd-modal');
+if (cmdModal) {
+  cmdModal.onclick = e => { if (e.target === cmdModal) cmdModal.classList.remove('open'); };
+}
 
 // Boot initialization
 initTheme();
