@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Purge IndexedDB</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 0 20px;
+            line-height: 1.5;
+        }
+        button {
+            padding: 10px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #e53e3e;
+            color: white;
+            border: none;
+            border-radius: 6px;
+        }
+        button:hover {
+            background-color: #c53030;
+        }
+        #log {
+            margin-top: 20px;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>IndexedDB Purge Tool</h2>
+    <p>Click the button below to detect and delete all accessible IndexedDB databases for this origin.</p>
+    
+    <button onclick="purgeIndexedDB()">Purge All IndexedDB</button>
+
+    <div id="log">Status: Idle</div>
+
+    <script>
+        function logMessage(msg) {
+            const logDiv = document.getElementById('log');
+            logDiv.textContent += '\n' + msg;
+        }
+
+        async function purgeIndexedDB() {
+            const logDiv = document.getElementById('log');
+            logDiv.textContent = 'Starting purge process...';
+
+            if (!('indexedDB' in window)) {
+                logMessage('Error: IndexedDB is not supported in this browser.');
+                return;
+            }
+
+            if (!indexedDB.databases) {
+                logMessage('Error: indexedDB.databases() API is not supported in this browser.');
+                return;
+            }
+
+            try {
+                const dbs = await indexedDB.databases();
+
+                if (dbs.length === 0) {
+                    logMessage('No IndexedDB databases found on this origin.');
+                    return;
+                }
+
+                logMessage(`Found ${dbs.length} database(s). Deleting...`);
+
+                for (const db of dbs) {
+                    if (!db.name) continue;
+
+                    await new Promise((resolve) => {
+                        const req = indexedDB.deleteDatabase(db.name);
+
+                        req.onsuccess = () => {
+                            logMessage(`Successfully deleted: "${db.name}"`);
+                            resolve();
+                        };
+
+                        req.onerror = (event) => {
+                            logMessage(`Failed to delete: "${db.name}" - ${event.target.error}`);
+                            resolve();
+                        };
+
+                        req.onblocked = () => {
+                            logMessage(`Blocked from deleting "${db.name}". Please close other tabs open to this site and try again.`);
+                            resolve();
+                        };
+                    });
+                }
+
+                logMessage('Purge complete.');
+            } catch (err) {
+                logMessage(`Error accessing databases: ${err.message}`);
+            }
+        }
+    </script>
+
+</body>
+</html>
