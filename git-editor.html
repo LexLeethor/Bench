@@ -221,6 +221,7 @@ footer { height: 44px; background: var(--bg-side); border-top: 1px solid var(--b
       <input id="rem" type="checkbox"> Remember
     </label>
     <span id="who" style="font-weight:600;color:var(--fg-main)"></span>
+    <button id="toggle-visibility" title="Toggle Repo Visibility (Public/Private)" style="display:none"><i class="fa-solid fa-lock"></i> <span id="vis-label">Private</span></button>
     <button id="theme-toggle" title="Toggle Light/Dark Theme"><i class="fa-solid fa-sun"></i></button>
   </div>
 </header>
@@ -534,6 +535,7 @@ $('#repo').onchange = e => {
 async function openRepo(full, keep) {
   S.repo = full; S.ch.clear(); S.cur = '';
   hideAllViews();
+  updateVisibilityButton();
   const bs = await api(`/repos/${full}/branches?per_page=100`);
   S.branches = bs.map(b => ({ name: b.name, sha: b.commit.sha }));
   const def = (S.repos.find(r => r.full_name === full) || {}).default_branch;
@@ -548,6 +550,51 @@ async function openRepo(full, keep) {
   $('#br').value = pick.name;
   await setBranch(pick.name);
 }
+
+function updateVisibilityButton() {
+  const visBtn = $('#toggle-visibility');
+  const visLabel = $('#vis-label');
+  if (!S.repo) {
+    visBtn.style.display = 'none';
+    return;
+  }
+  const currentRepoInfo = S.repos.find(r => r.full_name === S.repo);
+  if (!currentRepoInfo) {
+    visBtn.style.display = 'none';
+    return;
+  }
+  visBtn.style.display = 'inline-flex';
+  if (currentRepoInfo.private) {
+    visBtn.className = 'danger';
+    visBtn.innerHTML = '<i class="fa-solid fa-lock"></i> <span id="vis-label">Private</span>';
+  } else {
+    visBtn.className = '';
+    visBtn.innerHTML = '<i class="fa-solid fa-lock-open"></i> <span id="vis-label">Public</span>';
+  }
+}
+
+$('#toggle-visibility').onclick = () => {
+  if (!S.repo) return;
+  const currentRepoInfo = S.repos.find(r => r.full_name === S.repo);
+  if (!currentRepoInfo) return;
+
+  const willBePrivate = !currentRepoInfo.private;
+  const actionText = willBePrivate ? 'Private' : 'Public';
+
+  if (!confirm(`Are you sure you want to change '${S.repo}' visibility to ${actionText}?`)) return;
+
+  run(`Changing visibility to ${actionText}`, async () => {
+    const updated = await api(`/repos/${S.repo}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ private: willBePrivate })
+    });
+
+    currentRepoInfo.private = updated.private;
+    updateVisibilityButton();
+    await loadRepos(S.repo);
+    toast(`Repository visibility changed to ${actionText}!`, 'success');
+  });
+};
 
 function fillBranches() {
   const s = $('#br'); s.innerHTML = '';
